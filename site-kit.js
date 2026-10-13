@@ -2723,11 +2723,183 @@
     document.body.setAttribute("data-hero-effect", effect);
   }
 
+  /**
+   * The site follows Bokningar (2026-10-13, config/siteDataSync.ts): the price
+   * list, the opening hours and the team come from the same records the
+   * booking uses. The server already writes them into the page on every
+   * publish; this asks for today's values (GET /bookings/:id/site-data) and
+   * updates the same blocks before they are wired, so a change in Bokningar
+   * shows at once. Same rules as syncPriceList() there: rows matched by name
+   * get the catalog's name, time and price, missing services get a row in
+   * their category, rows the catalog doesn't have go, empty groups go. No
+   * answer within 1.5 s = the page as published.
+   */
+  // Reading prices, hours and staff books nothing, so it runs in demo mode
+  // too (data-live only decides whether bookings are real, see DEMO_STAFF).
+  function siteDataSource() {
+    var el = document.getElementById("bookingWidget") || document.querySelector("[data-company-id][data-api-base]");
+    if (!el || !el.getAttribute("data-company-id") || !el.getAttribute("data-api-base")) return null;
+    return { companyId: el.getAttribute("data-company-id"), apiBase: el.getAttribute("data-api-base") };
+  }
+  function loadSiteData(done) {
+    // Inside Skyltfönstret's editor (marketing-site/editor.js): its data, drafts included.
+    try {
+      var editor = window.parent !== window && window.parent.SkyltEditor;
+      if (editor && editor.siteData) { var drafted = editor.siteData(); if (drafted) { done(drafted); return; } }
+    } catch (e) {}
+    var src = siteDataSource();
+    if (!src || !window.fetch || !document.querySelector(".menu-groups, .hours-list, .team-block, #besok")) { done(null); return; }
+    var finished = false;
+    var finish = function (data) { if (finished) return; finished = true; clearTimeout(timer); done(data); };
+    var timer = setTimeout(function () { finish(null); }, 1500);
+    fetch(src.apiBase + "/bookings/" + src.companyId + "/site-data")
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(finish, function () { finish(null); });
+  }
+  var DAY_ROWS = [["1", "Måndag"], ["2", "Tisdag"], ["3", "Onsdag"], ["4", "Torsdag"], ["5", "Fredag"], ["6", "Lördag"], ["0", "Söndag"]];
+  function syncHoursDom(weekly) {
+    Array.prototype.forEach.call(document.querySelectorAll(".hours-list"), function (list) {
+      list.textContent = "";
+      DAY_ROWS.forEach(function (d) {
+        var h = weekly[d[0]];
+        var li = document.createElement("li");
+        var day = document.createElement("span");
+        day.className = "hd-day";
+        day.textContent = d[1];
+        var time = document.createElement("span");
+        time.className = "hd-time";
+        time.textContent = h ? h.open + "–" + h.close : "Stängt";
+        li.appendChild(day);
+        li.appendChild(time);
+        list.appendChild(li);
+      });
+      list.classList.remove("hours-placeholder");
+    });
+    Array.prototype.forEach.call(document.querySelectorAll(".hours-placeholder-note"), function (p) { p.parentNode.removeChild(p); });
+  }
+  function normService(name) {
+    return String(name || "").normalize("NFC").toLowerCase().replace(/[‐-―]/g, "-").replace(/\s+/g, " ").replace(/^[\s.,:;·-]+|[\s.,:;·-]+$/g, "").trim();
+  }
+  function priceParts(label) {
+    var t = String(label || "").replace(/\s+/g, " ").trim();
+    var m = /^från\s+(.*)$/i.exec(t);
+    var amount = (m ? m[1] : t).trim();
+    return { from: !!m && !!amount, amount: amount || "Pris på förfrågan" };
+  }
+  function priceItemEl(s) {
+    var p = priceParts(s.price_label);
+    var item = document.createElement("div");
+    item.className = "price-item";
+    item.innerHTML = '<div class="price-item-info"><span class="price-item-name"></span><span class="price-item-duration"></span></div><div class="price-item-price">' + (p.from ? '<span class="price-item-from">Från</span>' : "") + '<span class="price-item-amount"></span></div><button class="price-item-book-btn" type="button">Boka</button>';
+    item.querySelector(".price-item-name").textContent = s.name;
+    item.querySelector(".price-item-duration").textContent = s.duration_minutes + " min";
+    item.querySelector(".price-item-amount").textContent = p.amount;
+    var btn = item.querySelector(".price-item-book-btn");
+    btn.setAttribute("data-service-name", s.name);
+    btn.setAttribute("data-duration-minutes", String(s.duration_minutes));
+    return item;
+  }
+  function groupLabel(group) {
+    var h = group.querySelector("h2, h3, h4");
+    if (!h) return "";
+    var c = h.cloneNode(true);
+    Array.prototype.forEach.call(c.querySelectorAll(".menu-group-count"), function (x) { x.parentNode.removeChild(x); });
+    return c.textContent.replace(/\s+/g, " ").trim();
+  }
+  function syncPricesDom(services) {
+    var root = document.querySelector(".menu-groups");
+    if (!root) return;
+    var byKey = {};
+    services.forEach(function (s) { var k = normService(s.name); if (!byKey[k]) byKey[k] = s; });
+    var seen = {};
+    Array.prototype.forEach.call(root.querySelectorAll(".price-item"), function (item) {
+      var nameEl = item.querySelector(".price-item-name");
+      var key = normService(nameEl ? nameEl.textContent : "");
+      var s = byKey[key];
+      if (!s || seen[key]) { item.parentNode.removeChild(item); return; }
+      seen[key] = true;
+      var amount = item.querySelector(".price-item-amount");
+      var btn = item.querySelector("[data-duration-minutes]");
+      var p = priceParts(s.price_label);
+      var same = nameEl.textContent.trim() === s.name && amount && amount.textContent.trim() === p.amount &&
+        !!item.querySelector(".price-item-from") === p.from && (!btn || btn.getAttribute("data-duration-minutes") === String(s.duration_minutes));
+      if (!same) item.parentNode.replaceChild(priceItemEl(s), item);
+    });
+    Array.prototype.forEach.call(root.querySelectorAll(".service-group"), function (g) { if (!g.querySelector(".price-item")) g.parentNode.removeChild(g); });
+    var groups = Array.prototype.filter.call(root.children, function (el) { return el.classList.contains("menu-group"); });
+    groups = groups.filter(function (g) { if (g.querySelector(".price-item")) return true; g.parentNode.removeChild(g); return false; });
+    services.forEach(function (s) {
+      var key = normService(s.name);
+      if (seen[key]) return;
+      seen[key] = true;
+      var cat = String(s.category || "").trim() || (groups.length === 1 ? groupLabel(groups[0]) : "Övrigt");
+      var target = groups.filter(function (g) { return groupLabel(g).toLowerCase() === cat.toLowerCase(); })[0];
+      if (!target) {
+        target = document.createElement("div");
+        target.className = "menu-group";
+        var h = document.createElement("h3");
+        h.textContent = cat;
+        target.appendChild(h);
+        root.appendChild(target);
+        groups.push(target);
+      }
+      var sg = document.createElement("div");
+      sg.className = "service-group";
+      var sgName = document.createElement("span");
+      sgName.className = "service-group-name";
+      sgName.textContent = s.name;
+      sg.appendChild(sgName);
+      sg.appendChild(priceItemEl(s));
+      target.appendChild(sg);
+    });
+    groups.forEach(function (g) {
+      var badge = g.querySelector(".menu-group-count");
+      if (badge) badge.textContent = String(g.querySelectorAll(".price-item").length);
+    });
+    var note = root.previousElementSibling;
+    if (note && note.classList.contains("price-example-note")) note.parentNode.removeChild(note);
+  }
+  function syncTeamDom(team) {
+    var block = document.querySelector(".team-block");
+    if (!team || team.count < 2 || !team.html) {
+      if (block) { var sec = block.closest("section"); (sec || block).hidden = true; }
+      return;
+    }
+    var tmp = document.createElement("div");
+    tmp.innerHTML = team.html;
+    var fresh = tmp.firstElementChild;
+    if (!fresh) return;
+    if (block) {
+      if (block.outerHTML !== fresh.outerHTML) block.parentNode.replaceChild(fresh, block);
+      return;
+    }
+    var anchor = document.getElementById("besok") || document.querySelector("footer");
+    if (!anchor || !anchor.parentNode) return;
+    var section = document.createElement("section");
+    section.className = "section";
+    section.id = "teamet";
+    section.appendChild(fresh);
+    anchor.parentNode.insertBefore(section, anchor);
+  }
+  function applySiteData(data) {
+    try { if (data.hours) syncHoursDom(data.hours); } catch (e) {}
+    try { if (data.services && data.services.length) syncPricesDom(data.services); } catch (e) {}
+    try { if (data.team) syncTeamDom(data.team); } catch (e) {}
+  }
+
+  /** "Tillfälligt stängt" (config/directEdit.ts): the banner goes away by itself after its last day. */
+  function wireClosure() {
+    var d = new Date();
+    var today = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    Array.prototype.forEach.call(document.querySelectorAll(".sk-closure"), function (el) {
+      var to = el.getAttribute("data-to");
+      if (to && today > to) el.hidden = true;
+    });
+  }
+
   function init() {
+    wireClosure();
     renderStars();
-    wireServiceGroups();
-    wirePriceMenu();
-    wireHoursList();
     wireReviewsBlock();
     wireFaqMenu();
     wireCountUp();
@@ -2737,23 +2909,31 @@
     wireFlowLines();
     wireSignatureMark();
     wireMonoBadge();
-    wireNextAvailable();
-    wireBooking();
-
-    // The legacy always-visible calendar uses the shared #bdBackdrop confirm
-    // modal; the per-service popup has its own details step (wireBookingFlow).
-    var calRoot = document.getElementById("bookingCal");
-    if (calRoot) {
-      var confirmModal = createConfirmModal(
-        calRoot.getAttribute("data-api-base") || "",
-        calRoot.getAttribute("data-company-id"),
-        calRoot.getAttribute("data-live") === "true"
-      );
-      wireBookingCalendar(confirmModal);
-    }
-    wireBookingFlow();
-
     wireHeaderScrollState();
+
+    // Prices, hours, team and everything booking reads from them are wired
+    // after today's values from Bokningar are in (loadSiteData above).
+    loadSiteData(function (data) {
+      if (data) applySiteData(data);
+      wireServiceGroups();
+      wirePriceMenu();
+      wireHoursList();
+      wireNextAvailable();
+      wireBooking();
+
+      // The legacy always-visible calendar uses the shared #bdBackdrop confirm
+      // modal; the per-service popup has its own details step (wireBookingFlow).
+      var calRoot = document.getElementById("bookingCal");
+      if (calRoot) {
+        var confirmModal = createConfirmModal(
+          calRoot.getAttribute("data-api-base") || "",
+          calRoot.getAttribute("data-company-id"),
+          calRoot.getAttribute("data-live") === "true"
+        );
+        wireBookingCalendar(confirmModal);
+      }
+      wireBookingFlow();
+    });
   }
 
   if (document.readyState === "loading") {
