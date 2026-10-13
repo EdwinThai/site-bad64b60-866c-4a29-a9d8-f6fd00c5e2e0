@@ -37,3 +37,5 @@ a{color:inherit}
 .reveal.is-visible,.reveal.visible,.reveal.in{opacity:1;transform:none}
 @media(max-width:800px){.gallery{grid-template-columns:1fr}.contact-grid{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.reveal{transform:none}}
+
+.visit-split-head{display:grid;justify-items:center;gap:.6rem;margin:0 auto 2rem;text-align:center}
