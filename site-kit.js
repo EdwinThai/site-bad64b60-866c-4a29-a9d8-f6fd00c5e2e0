@@ -2739,7 +2739,7 @@
   function siteDataSource() {
     var el = document.getElementById("bookingWidget") || document.querySelector("[data-company-id][data-api-base]");
     if (!el || !el.getAttribute("data-company-id") || !el.getAttribute("data-api-base")) return null;
-    return { companyId: el.getAttribute("data-company-id"), apiBase: el.getAttribute("data-api-base") };
+    return { companyId: el.getAttribute("data-company-id"), apiBase: el.getAttribute("data-api-base"), live: el.getAttribute("data-live") === "true" };
   }
   function loadSiteData(done) {
     // Inside Skyltfönstret's editor (marketing-site/editor.js): its data, drafts included.
@@ -2755,6 +2755,26 @@
     fetch(src.apiBase + "/bookings/" + src.companyId + "/site-data")
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(finish, function () { finish(null); });
+  }
+  /**
+   * Visit counter (2026-10-15): one beacon per page view of the PUBLISHED site,
+   * counted per salon and day by POST /bookings/:id/visit. Nothing about the
+   * visitor is sent (no cookie, no id). Not counted: any page shown inside a
+   * frame (Skyltfönstret's editor, AIOS, the tutorial), anything served from
+   * our own server (/preview), automated browsers (the screenshot review), and
+   * sites that aren't a customer's yet: only with data-live="true", set when the
+   * agency turns real bookings on in AIOS (the server checks that too).
+   */
+  function countVisit() {
+    try {
+      var src = siteDataSource();
+      if (!src || src.live !== true || window.parent !== window || navigator.webdriver) return;
+      var api = new URL(src.apiBase, location.href);
+      if (api.origin === location.origin) return;
+      var url = api.href.replace(/\/$/, "") + "/bookings/" + encodeURIComponent(src.companyId) + "/visit";
+      if (navigator.sendBeacon) navigator.sendBeacon(url);
+      else if (window.fetch) fetch(url, { method: "POST", mode: "no-cors", keepalive: true });
+    } catch (e) {}
   }
   var DAY_ROWS = [["1", "Måndag"], ["2", "Tisdag"], ["3", "Onsdag"], ["4", "Torsdag"], ["5", "Fredag"], ["6", "Lördag"], ["0", "Söndag"]];
   function syncHoursDom(weekly) {
@@ -2910,6 +2930,7 @@
     wireSignatureMark();
     wireMonoBadge();
     wireHeaderScrollState();
+    countVisit();
 
     // Prices, hours, team and everything booking reads from them are wired
     // after today's values from Bokningar are in (loadSiteData above).
