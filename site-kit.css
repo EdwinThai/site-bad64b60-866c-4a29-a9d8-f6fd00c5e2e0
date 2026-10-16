@@ -1397,3 +1397,10 @@ body.sk-selma[data-hero-effect="horizon"] .hero-frame > .site-header, body.sk-se
 .sk-closure p { margin: 0 auto; max-width: 70ch; }
 .sk-closure strong { font-weight: 600; }
 .sk-closure[hidden] { display: none; }
+
+/* Never a sideways scroll on any screen (2026-10-15). Measured on the published sites:
+   on a tablet a closed off-canvas mobile menu and a model-written three-column price
+   grid pushed the page sideways. clip (not hidden) keeps sticky headers working. */
+html, body { overflow-x: clip; }
+.menu-groups > *, .price-item, .price-item > * { min-width: 0; }
+.price-item-name { overflow-wrap: anywhere; }
